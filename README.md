@@ -1,130 +1,50 @@
-# AWS Project - Build a Full End-to-End Web Application with 7 Services | Step-by-Step Tutorial
+# AWS Project: Serverless Web App (Wild Rydes)
 
-This repo contains the code files used in this [YouTube video](https://youtu.be/K6v6t5z6AsU).
+I built this project to get hands-on experience with a fully serverless architecture on AWS. I used a starter frontend from a tutorial and focused my work on building out the backend, security, and cloud infrastructure required to make it a functioning application.
 
-## TL;DR
-We're creating a web application for a unicorn ride-sharing service called Wild Rydes (from the original [Amazon workshop](https://aws.amazon.com/serverless-workshops)).  The app uses IAM, Amplify, Cognito, Lambda, API Gateway and DynamoDB, with code stored in GitHub and incorporated into a CI/CD pipeline with Amplify.
+## The Architecture
+The app is built using a decoupled frontend/backend approach:
+* **Host:** AWS Amplify (handles the CI/CD pipeline)
+* **Identity:** Amazon Cognito (JWT-based auth)
+* **Backend:** Node.js 20.x Lambda function
+* **API:** REST API via Amazon API Gateway
+* **Data:** Amazon DynamoDB
 
-The app will let you create an account and log in, then request a ride by clicking on a map (powered by ArcGIS).  The code can also be extended to build out more functionality.
 
-## Cost
-All services used are eligible for the [AWS Free Tier](https://aws.amazon.com/free/).  Outside of the Free Tier, there may be small charges associated with building the app (less than $1 USD), but charges will continue to incur if you leave the app running.  Please see the end of the YouTube video for instructions on how to delete all resources used in the video.
 
-## The Application Code
-The application code is here in this repository.
+## What I worked on
 
-## The Lambda Function Code
-Here is the code for the Lambda function, originally taken from the [AWS workshop](https://aws.amazon.com/getting-started/hands-on/build-serverless-web-app-lambda-apigateway-s3-dynamodb-cognito/module-3/ ), and updated for Node 20.x:
+### 🛠️ Setting up the Pipeline
+I started by connecting my GitHub repo to **AWS Amplify**. This automated the deployments. I tested the CI/CD pipeline by making a change to the UI code in GitHub; Amplify detected the push and updated the live site automatically.
 
-```node
-import { randomBytes } from 'crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+![Amplify Setup](./doc-images/amplify-setup.png)
 
-const client = new DynamoDBClient({});
-const ddb = DynamoDBDocumentClient.from(client);
+### 🔐 Auth and Security
+For user management, I configured **Amazon Cognito**. It handles the sign-up flow and email verification. Once a user logs in, the app gets a session token. I then configured an **API Gateway Authorizer** to check for this token, protecting the backend from unauthorized requests.
 
-const fleet = [
-    { Name: 'Angel', Color: 'White', Gender: 'Female' },
-    { Name: 'Gil', Color: 'White', Gender: 'Male' },
-    { Name: 'Rocinante', Color: 'Yellow', Gender: 'Female' },
-];
+### ⚙️ The Backend Logic & IAM
+The logic is handled by a Lambda function. A major focus here was **IAM security**. Instead of giving the function broad access, I wrote a custom policy that restricts it to only writing data to the specific DynamoDB table ARN. This follows the principle of least privilege.
 
-export const handler = async (event, context) => {
-    if (!event.requestContext.authorizer) {
-        return errorResponse('Authorization not configured', context.awsRequestId);
-    }
+![IAM Policy](./doc-images/iam-policy.png)
 
-    const rideId = toUrlString(randomBytes(16));
-    console.log('Received event (', rideId, '): ', event);
+I verified the logic by running a test event through the Lambda console. It returned a successful **201 status**, confirming the database write was working.
 
-    const username = event.requestContext.authorizer.claims['cognito:username'];
-    const requestBody = JSON.parse(event.body);
-    const pickupLocation = requestBody.PickupLocation;
+![Lambda Test Success](./doc-images/lambda-test.png)
 
-    const unicorn = findUnicorn(pickupLocation);
 
-    try {
-        await recordRide(rideId, username, unicorn);
-        return {
-            statusCode: 201,
-            body: JSON.stringify({
-                RideId: rideId,
-                Unicorn: unicorn,
-                Eta: '30 seconds',
-                Rider: username,
-            }),
-            headers: {
-                'Access-Control-Allow-Origin': '*',
-            },
-        };
-    } catch (err) {
-        console.error(err);
-        return errorResponse(err.message, context.awsRequestId);
-    }
-};
 
-function findUnicorn(pickupLocation) {
-    console.log('Finding unicorn for ', pickupLocation.Latitude, ', ', pickupLocation.Longitude);
-    return fleet[Math.floor(Math.random() * fleet.length)];
-}
+## Final Result
+After connecting the API Gateway to the frontend, the app was fully live. You can pick a location on the map, and the system assigns a unicorn and saves the trip data into DynamoDB.
 
-async function recordRide(rideId, username, unicorn) {
-    const params = {
-        TableName: 'Rides',
-        Item: {
-            RideId: rideId,
-            User: username,
-            Unicorn: unicorn,
-            RequestTime: new Date().toISOString(),
-        },
-    };
-    await ddb.send(new PutCommand(params));
-}
+![Final App](./doc-images/final-app.png)
 
-function toUrlString(buffer) {
-    return buffer.toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=/g, '');
-}
+**Verification:** I checked the DynamoDB table after the request, and the ride entries appeared with the correct timestamps and user IDs.
 
-function errorResponse(errorMessage, awsRequestId) {
-    return {
-        statusCode: 500,
-        body: JSON.stringify({
-            Error: errorMessage,
-            Reference: awsRequestId,
-        }),
-        headers: {
-            'Access-Control-Allow-Origin': '*',
-        },
-    };
-}
-```
+![Database Proof](./doc-images/database-proof.png)
 
-## The Lambda Function Test Function
-Here is the code used to test the Lambda function:
 
-```json
-{
-    "path": "/ride",
-    "httpMethod": "POST",
-    "headers": {
-        "Accept": "*/*",
-        "Authorization": "eyJraWQiOiJLTzRVMWZs",
-        "content-type": "application/json; charset=UTF-8"
-    },
-    "queryStringParameters": null,
-    "pathParameters": null,
-    "requestContext": {
-        "authorizer": {
-            "claims": {
-                "cognito:username": "the_username"
-            }
-        }
-    },
-    "body": "{\"PickupLocation\":{\"Latitude\":47.6174755835663,\"Longitude\":-122.28837066650185}}"
-}
-```
 
+## Credits
+The frontend assets and application blueprint are from the [Wild Rydes Serverless Workshop](https://github.com/aws-samples/aws-serverless-workshops), as featured in the [Tiny Technical Tutorials](https://github.com/tinytechnicaltutorials/wildrydes-site) guide. 
+
+**My contribution involved the end-to-end AWS resource provisioning, IAM security policy authoring, and service integration.**
